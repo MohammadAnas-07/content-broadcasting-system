@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Uploads (keep the folder, ignore content)
+uploads/*
+!uploads/.gitkeep
+!uploads/samples/
+
+# Build artifacts
+dist/
+build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Prisma generated
+prisma/migrations/
+
+Scratchpad/

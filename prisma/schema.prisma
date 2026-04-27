@@ -1,0 +1,106 @@
+// This is your Prisma schema file.
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────
+
+enum Role {
+  PRINCIPAL
+  TEACHER
+}
+
+enum ContentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ─────────────────────────────────────────────
+// Models
+// ─────────────────────────────────────────────
+
+model User {
+  id           Int      @id @default(autoincrement())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  // A user can upload many content items
+  uploadedContent Content[] @relation("uploaded")
+
+  // A principal can approve many content items
+  approvedContent Content[] @relation("approved")
+}
+
+model Content {
+  id          Int           @id @default(autoincrement())
+  title       String
+  description String?
+  // subject is always stored lowercase — enforced at the service layer before insert
+  subject     String
+  // filePath stores ONLY the bare filename (e.g., "a3f2c1b8-uuid.png"), NOT the full path.
+  // The broadcast endpoint constructs the public URL as /uploads/${filePath}.
+  // express.static('uploads') at /uploads serves the actual bytes.
+  filePath    String
+  fileType    String
+  fileSize    Int
+
+  uploadedById Int
+  uploadedBy   User @relation("uploaded", fields: [uploadedById], references: [id])
+
+  status          ContentStatus @default(PENDING)
+  rejectionReason String?
+
+  approvedById Int?
+  approvedBy   User?    @relation("approved", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+
+  // Optional scheduling window. If either is NULL, the item is never served by the rotation engine.
+  startTime DateTime?
+  endTime   DateTime?
+
+  // Per-item duration in the rotation cycle (default 5 minutes).
+  // The spec says teachers set this per upload. ContentSchedule.durationMinutes is kept
+  // for the required table structure, but this field is the runtime source of truth.
+  rotationDurationMinutes Int @default(5)
+
+  createdAt DateTime @default(now())
+
+  // Composite index for the broadcast query: filter by teacher, subject, and status together.
+  @@index([uploadedById, subject, status])
+}
+
+// ContentSlot and ContentSchedule are kept as required tables per the spec.
+// At runtime, the rotation engine uses Content.rotationDurationMinutes (per-item),
+// which is the canonical source of truth. See architecture-notes.txt for details.
+
+model ContentSlot {
+  id        Int      @id @default(autoincrement())
+  subject   String   @unique
+  createdAt DateTime @default(now())
+
+  schedules ContentSchedule[]
+}
+
+model ContentSchedule {
+  id             Int      @id @default(autoincrement())
+  contentId      Int
+  slotId         Int
+  rotationOrder  Int
+  durationMinutes Int
+  createdAt      DateTime @default(now())
+
+  slot ContentSlot @relation(fields: [slotId], references: [id])
+}

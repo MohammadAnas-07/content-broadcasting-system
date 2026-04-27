@@ -1,0 +1,301 @@
+Content Broadcasting System — Architecture Notes
+=================================================
+
+This document explains the design decisions made while building the CBS backend.
+Written in plain English with enough detail so evaluators can follow the reasoning,
+not just the code.
+
+
+1. AUTHENTICATION AND RBAC FLOW
+--------------------------------
+
+When a user POSTs to /api/auth/login with valid credentials, the server:
+  1. Looks up the user by email using Prisma
+  2. Compares the submitted password against the stored bcrypt hash (10 rounds)
+  3. Signs a JWT containing { id, email, role } with a 24h expiry
+
+The JWT is returned in the response body. Clients store it and send it as:
+  Authorization: Bearer <token>
+
+The authenticate middleware (auth.middleware.js) runs first on every protected
+route. It:
+  - Reads the Authorization header
+  - Strips "Bearer "
+  - Calls jwt.verify() against the JWT_SECRET
+  - Attaches the decoded payload to req.user
+
+If the token is missing or invalid, a 401 is returned immediately. No route handler runs.
+
+After authenticate, the requireRole() middleware checks req.user.role against
+the list of allowed roles. If the role doesn't match, 403 is returned.
+
+The chain for a typical teacher-only route looks like:
+  router.post('/upload', authenticate, requireRole('TEACHER'), uploadSingle, validate(...), controller)
+
+Email enumeration protection: both "email not found" and "wrong password" return
+the same 401 with the same message "Invalid credentials". We also call bcrypt.compare
+with a dummy hash when the email doesn't exist, to equalise response time and prevent
+timing-based email enumeration attacks.
+
+
+2. SUBJECT-BASED SYSTEM DESIGN
+--------------------------------
+
+Subject is stored as a plain lowercase string on the Content row. There is no
+separate "Subject" model because subjects are teacher-defined and dynamic — a teacher
+can upload content for "environmental_science" without any admin pre-configuration.
+
+The ContentSlot table is kept as required by the assignment spec. In the current
+implementation it is not used at runtime — the rotation engine operates directly
+on Content rows. ContentSlot and ContentSchedule exist to satisfy the minimum
+table requirements listed in the spec, and to provide a hook for a future feature
+where an admin pre-defines allowed subjects or schedule templates.
+
+The per-content rotationDurationMinutes field is the canonical source of truth for
+the rotation engine. The spec says teachers set duration per upload, which makes
+putting it on Content the right place. ContentSchedule.durationMinutes mirrors this
+but is not read by the scheduler.
+
+
+3. UPLOAD HANDLING
+-------------------
+
+File uploads use Multer with disk storage. Key decisions:
+
+  - Filename generation: UUID v4 + original extension. For example, a file called
+    "worksheet.png" becomes "a3f2c1b8-9d4e-4a3b-b9c1-d2e3f4a5b6c7.png".
+    This prevents path traversal attacks, filename collisions, and hides original
+    filenames from the public URL.
+
+  - Dual validation: we check BOTH the MIME type (from the multipart Content-Type
+    header) AND the file extension from the original filename. MIME types can be
+    spoofed by crafting a multipart request manually — an attacker could send an
+    executable with Content-Type: image/png. Checking the extension adds a second
+    layer. Neither alone is sufficient.
+
+  - Max size: Multer's limits.fileSize enforces the 10MB cap at the streaming layer,
+    before the file is fully buffered in memory. This means a 1GB upload attempt
+    is rejected mid-stream, not after wasting memory.
+
+  - Storage path: files land in the ./uploads/ directory. express.static('uploads')
+    is mounted at /uploads in app.js, so /uploads/<filename> resolves to the actual
+    file bytes.
+
+  - Database storage: ONLY the bare filename (e.g. "abc123.png") is stored in
+    Content.filePath. NOT a full path like "./uploads/abc123.png". The broadcast
+    response constructs the URL as /uploads/${filePath}. Storing only the filename
+    makes it easy to change the storage backend later (swap to S3 by changing one
+    line in the service, not touching the database).
+
+Future S3 swap: replace the Multer disk storage with multer-s3, upload to a bucket,
+store the S3 key in filePath, and change the URL builder in the scheduler to use
+the S3 public URL. Everything else stays the same.
+
+
+4. APPROVAL WORKFLOW
+----------------------
+
+The content state machine has two terminal states:
+
+  PENDING → APPROVED   (principal approves)
+  PENDING → REJECTED   (principal rejects, with a reason)
+
+Both transitions are guarded with a check: if the content is NOT currently PENDING,
+the server returns 409 Conflict. This prevents double-approvals (a principal clicking
+"approve" twice in quick succession) and protects against race conditions in the UI.
+
+REJECTED is permanent. Teachers cannot re-submit the same content row. They must
+upload a new content item. This was a deliberate simplification to avoid a complex
+re-submission flow. The alternative — allowing REJECTED → PENDING — would require
+UI for teachers to edit and resubmit, add a "resubmit" endpoint, and handle cases
+where content was partially modified. For a school broadcasting system, it is simpler
+and cleaner to say "rejected content stays rejected, upload a new version." This
+assumption is documented in the README.
+
+The "uploaded" vs "pending" ambiguity: the PDF lists "uploaded" and "pending" as
+separate states but they happen at the same instant. When a teacher uploads a file,
+the file lands on disk and the database row is created simultaneously, both in the
+same HTTP request. There is no meaningful intermediate state between "file saved"
+and "queued for review." We collapse this into a single PENDING state.
+
+
+5. SCHEDULING AND ROTATION LOGIC
+----------------------------------
+
+This is the core of the system. The rotation engine is in scheduler.service.js.
+
+Goal: given a teacher ID and "right now," return which content item is currently
+active for each subject.
+
+Eligibility criteria (all must be true):
+  - status = APPROVED
+  - startTime IS NOT NULL AND endTime IS NOT NULL
+  - startTime <= now <= endTime
+  - uploadedById = teacherId
+
+Items without a startTime/endTime are NEVER served. This is by design — the spec
+says the window is required for an item to enter rotation. A teacher who uploads
+without a time window is submitting for approval, not for live display.
+
+Grouping and sorting:
+  Eligible items are grouped by subject in JavaScript (not SQL) because we need
+  the full set to compute the cycle. Within each group, items are sorted by
+  createdAt ascending. Upload order defines rotation order. The first item uploaded
+  comes up first, then the second, cycling forever.
+
+Why createdAt, not a manual rotationOrder field?
+  Simpler. Teachers don't manage rotation slots — they just upload. The system
+  automatically rotates in upload order. If you want to change the order, re-upload.
+
+Rotation epoch:
+  We need a stable "zero point" for the cycle clock. We use the earliest createdAt
+  in the group, converted to Unix seconds (integer arithmetic, not floats).
+
+  Why NOT startTime?
+    - Items in the same subject can have different startTime values
+    - If a new item is added later with an earlier startTime (say, for a different
+      window), using startTime as the epoch would shift the phase for all viewers
+    - createdAt is immutable — it is set once at INSERT and never changes
+
+  Why the earliest createdAt, not a fixed absolute timestamp?
+    We need ANY stable point in the past. The earliest createdAt in the group
+    is always well-defined, never null, and doesn't change when new items are added
+    (new items have later createdAt values, so the minimum doesn't decrease).
+
+Cycle math worked example:
+  Suppose teacher 1 has 3 approved maths items:
+    Item A: createdAt = 2026-01-01T10:00:00Z, rotationDurationMinutes = 5
+    Item B: createdAt = 2026-01-05T08:00:00Z, rotationDurationMinutes = 3
+    Item C: createdAt = 2026-01-10T14:00:00Z, rotationDurationMinutes = 5
+
+  cycleSeconds = (5 + 3 + 5) * 60 = 780 seconds (13 minutes)
+
+  epoch = 2026-01-01T10:00:00Z = 1735725600 seconds (Unix)
+
+  Suppose now = 2026-04-27T01:00:00Z = 1745712000 seconds
+
+  elapsed = 1745712000 - 1735725600 = 9986400 seconds
+  positionInCycle = 9986400 % 780 = 240 seconds
+
+  Walk the items:
+    Item A owns [0,   300)  → 240 is in this range ✓
+    positionInCycle = 240, slotEnd = 300
+    secondsRemainingInSlot = 300 - 240 = 60 seconds
+
+  Result: Item A is active, 60 seconds remain in its slot.
+
+  60 seconds later, positionInCycle = 300 → Item B becomes active.
+
+Dynamic eligibility note:
+  When items enter or leave eligibility (because now crosses a startTime or endTime
+  boundary), the eligible set changes. This means the cycle composition shifts. This
+  is correct and intentional — the rotation always reflects "who is currently eligible."
+  It is NOT a bug that the rotation resets when a new item becomes eligible. The
+  epoch (earliest createdAt) stays the same, but the cycle length changes because
+  there are now more (or fewer) items. The position in the new cycle is still
+  deterministic: same math, different cycleSeconds.
+
+
+6. DATABASE DESIGN DECISIONS
+-------------------------------
+
+Indexes:
+  @@index([uploadedById, subject, status]) on Content
+  This serves the broadcast query directly: filter by teacher, optionally by
+  subject, and always by status = APPROVED. Without this index, a teacher with
+  thousands of content rows would cause a full table scan on every broadcast request.
+
+  subject on Content has its own implicit scan support from the composite index above.
+
+Relations:
+  User has two relations to Content: "uploaded" and "approved". Prisma requires
+  both sides of an ambiguous self-relation to be named explicitly. Using @relation("uploaded")
+  and @relation("approved") makes the intent clear and prevents the Prisma generate
+  error "Ambiguous self relation."
+
+Why Prisma:
+  - Type safety: the generated client gives TypeScript-style autocomplete even in JS
+  - Readable: evaluators can understand the schema from schema.prisma without reading SQL
+  - Migrations: prisma migrate dev generates versioned, reviewable migration files
+  - Seed: the Prisma client is available in seed.js with the same ergonomics
+
+Timestamps:
+  All DateTime fields use UTC internally. Prisma stores them as UTC in Postgres.
+  The scheduler operates in UTC. Clients send ISO-8601 strings; both
+  "2026-04-27T10:00:00Z" and "2026-04-27T15:30:00+05:30" are accepted because
+  Prisma's DateTime type parses ISO-8601 with timezone offsets and normalises to UTC.
+
+
+7. FOLDER STRUCTURE RATIONALE
+-------------------------------
+
+src/config/   — singleton clients (DB, Redis) and configuration objects (Swagger spec)
+               Separating these makes them easy to mock in tests and avoids circular imports.
+
+src/controllers/ — thin HTTP layer. Reads req, calls a service, writes res.
+                   No database calls, no business logic.
+
+src/services/    — business logic. All heavy lifting. Controllers should never need
+                   to think about what an "epoch" is.
+
+src/routes/      — Express routers + Swagger JSDoc annotations.
+                   Keeping JSDoc in route files keeps the annotation close to the route
+                   definition and avoids a separate spec file that drifts out of sync.
+
+src/middlewares/ — cross-cutting concerns: auth, RBAC, file upload, validation, error handling.
+                   Each middleware has one job.
+
+src/validators/  — Zod schemas, imported by the validate() middleware.
+                   Separated from routes so they can be reused or unit-tested independently.
+
+src/utils/       — stateless utility functions (logger, JWT wrappers, bcrypt wrappers, asyncHandler).
+                   No side effects, no imports of heavier modules.
+
+
+8. MIDDLEWARE CHAIN ORDER
+--------------------------
+
+In app.js, the middleware chain is:
+  1. cors()          — CORS headers on every response, before any route logic
+  2. morgan()        — HTTP access logging
+  3. express.json()  — parse JSON request bodies
+  4. express.urlencoded() — parse form bodies
+  5. express.static() at /uploads — serve uploaded files
+  6. Routes          — each route has its own middleware (authenticate, requireRole, validate, etc.)
+  7. 404 handler     — catches any unmatched routes
+  8. Error handler   — must be last, catches errors from asyncHandler
+
+Within a protected route:
+  authenticate → requireRole → upload (if applicable) → validate → controller
+
+This order is important: authenticate must run before requireRole (which reads req.user),
+and upload must run before validate (which reads req.body, which Multer populates).
+
+
+9. SCALABILITY APPROACH
+------------------------
+
+Current state (single server, local disk):
+  - Redis caching reduces DB load on the broadcast endpoint (most frequent endpoint)
+  - Rate limiting prevents individual IPs from hammering the service
+  - Prisma connection pooling is managed at the PrismaClient level
+
+What breaks with horizontal scaling:
+  - Local disk storage: uploaded files live on the disk of whichever server handled
+    the upload. Requests to a different server get 404. Fix: swap Multer disk storage
+    for S3 or any shared object store.
+  - Redis: in single-server mode, one Redis instance is fine. For multi-server,
+    use a Redis cluster or managed Redis (Upstash, Redis Cloud). The current
+    ioredis client supports cluster mode with a config change.
+  - Session state: there is none — all auth is stateless JWT. Horizontal scaling is
+    naturally supported for auth.
+
+Immediate improvements for production:
+  1. Move uploads to S3 (or compatible). One config change in upload.middleware.js.
+  2. Add a job queue (BullMQ over Redis) to send approval notification emails.
+  3. Add a second Redis read replica for broadcast caching at very high traffic.
+  4. Set up Prisma connection pooling with PgBouncer for thousands of concurrent connections.
+  5. Add request ID header (X-Request-Id) for distributed tracing.
+
+The rotation engine is stateless and CPU-cheap — it's just arithmetic. It scales
+horizontally without any changes.

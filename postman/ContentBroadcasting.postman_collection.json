@@ -1,0 +1,287 @@
+{
+  "info": {
+    "_postman_id": "cbs-collection-v1",
+    "name": "Content Broadcasting System",
+    "description": "Complete API collection for the Content Broadcasting System.\n\nSetup:\n1. Import this collection into Postman\n2. The login request auto-stores the JWT token in the `cbs_token` collection variable\n3. All protected requests use `{{cbs_token}}` automatically\n\nDemo credentials:\n- Principal: principal@cbs.local / Password123\n- Teacher 1:  teacher1@cbs.local  / Password123\n- Teacher 2:  teacher2@cbs.local  / Password123",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "cbs_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register (Teacher)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New Teacher\",\n  \"email\": \"newteacher@school.edu\",\n  \"password\": \"Password123\",\n  \"role\": \"TEACHER\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login as Principal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.success && json.data && json.data.token) {",
+                  "  pm.collectionVariables.set('cbs_token', json.data.token);",
+                  "  console.log('Token stored:', json.data.token.substring(0, 30) + '...');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"principal@cbs.local\",\n  \"password\": \"Password123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login as Teacher 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.success && json.data && json.data.token) {",
+                  "  pm.collectionVariables.set('cbs_token', json.data.token);",
+                  "  console.log('Token stored:', json.data.token.substring(0, 30) + '...');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"teacher1@cbs.local\",\n  \"password\": \"Password123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Me",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cbs_token}}" }],
+            "url": { "raw": "{{base_url}}/api/auth/me", "host": ["{{base_url}}"], "path": ["api", "auth", "me"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Teacher — Content",
+      "item": [
+        {
+          "name": "Upload Content (Image)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cbs_token}}" }],
+            "url": { "raw": "{{base_url}}/api/content/upload", "host": ["{{base_url}}"], "path": ["api", "content", "upload"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "title", "value": "My Maths Worksheet", "type": "text" },
+                { "key": "subject", "value": "maths", "type": "text" },
+                { "key": "description", "value": "Practice problems for grade 8", "type": "text" },
+                { "key": "startTime", "value": "2026-01-01T00:00:00Z", "type": "text" },
+                { "key": "endTime", "value": "2030-12-31T23:59:59Z", "type": "text" },
+                { "key": "rotationDurationMinutes", "value": "5", "type": "text" },
+                { "key": "file", "type": "file", "src": "", "description": "Select a JPEG/PNG/GIF image file" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "My Content (all)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cbs_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/content/my-content?page=1&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "content", "my-content"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "My Content (filter by status)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cbs_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/content/my-content?status=APPROVED",
+              "host": ["{{base_url}}"],
+              "path": ["api", "content", "my-content"],
+              "query": [{ "key": "status", "value": "APPROVED" }]
+            }
+          }
+        },
+        {
+          "name": "Get Single Content",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cbs_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/content/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "content", "1"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Principal — Approval",
+      "item": [
+        {
+          "name": "List Pending Content",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cbs_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/approval/pending?page=1&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "approval", "pending"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }]
+            }
+          }
+        },
+        {
+          "name": "List All Content (with filters)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cbs_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/approval/all?status=APPROVED&subject=maths",
+              "host": ["{{base_url}}"],
+              "path": ["api", "approval", "all"],
+              "query": [{ "key": "status", "value": "APPROVED" }, { "key": "subject", "value": "maths" }]
+            }
+          }
+        },
+        {
+          "name": "Approve Content",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cbs_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/approval/1/approve",
+              "host": ["{{base_url}}"],
+              "path": ["api", "approval", "1", "approve"]
+            }
+          }
+        },
+        {
+          "name": "Reject Content",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{cbs_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/approval/2/reject",
+              "host": ["{{base_url}}"],
+              "path": ["api", "approval", "2", "reject"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejectionReason\": \"Image resolution is too low for the display boards\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Public — Broadcast",
+      "item": [
+        {
+          "name": "Broadcast Discovery",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/content/live", "host": ["{{base_url}}"], "path": ["content", "live"] }
+          }
+        },
+        {
+          "name": "Live Broadcast — Teacher 1 (all subjects)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/content/live/teacher-1",
+              "host": ["{{base_url}}"],
+              "path": ["content", "live", "teacher-1"]
+            }
+          }
+        },
+        {
+          "name": "Live Broadcast — Teacher 1 (maths only)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/content/live/teacher-1?subject=maths",
+              "host": ["{{base_url}}"],
+              "path": ["content", "live", "teacher-1"],
+              "query": [{ "key": "subject", "value": "maths" }]
+            }
+          }
+        },
+        {
+          "name": "Live Broadcast — Teacher 2 (empty case)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/content/live/teacher-2",
+              "host": ["{{base_url}}"],
+              "path": ["content", "live", "teacher-2"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        }
+      ]
+    }
+  ]
+}
