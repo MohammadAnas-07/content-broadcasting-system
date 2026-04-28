@@ -1,0 +1,26 @@
+.rotation-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rotation-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(100, 116, 139, 0.3);
+  transition: all var(--transition);
+}
+
+.rotation-dot.active {
+  background: #3b82f6;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+  transform: scale(1.3);
+}
+
+.rotation-text {
+  font-size: 13px;
+  color: #64748b;
+  margin-left: 8px;
+  font-family: var(--font-mono);
+}

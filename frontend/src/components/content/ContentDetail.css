@@ -1,0 +1,60 @@
+.content-detail {
+  max-width: 800px;
+  animation: fadeIn 0.3s ease;
+}
+
+.content-detail-image {
+  width: 100%;
+  max-height: 500px;
+  object-fit: contain;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-6);
+}
+
+.content-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+.content-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.content-detail-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.content-detail-value {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.content-detail-rejection {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  background: var(--error-light);
+  border: 1px solid var(--error);
+  border-radius: var(--radius);
+}
+
+.content-detail-rejection-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--error);
+  margin-bottom: var(--space-2);
+}
+
+.content-detail-rejection-text {
+  font-size: 14px;
+  color: var(--text-primary);
+}
